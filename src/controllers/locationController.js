@@ -1,5 +1,6 @@
 
 import Location from '../models/Location.js';
+import logger from '../config/logger.js';
 
 // @desc    Get all locations for a user
 // @route   GET /api/locations
@@ -9,7 +10,7 @@ export const getAllLocations = async (req, res) => {
     const locations = await Location.find({ user: req.user.id });
     res.json(locations);
   } catch (err) {
-    console.error(err.message);
+    logger.error(`Error in getAllLocations: ${err.message}`);
     res.status(500).send('Server Error');
   }
 };
@@ -21,10 +22,14 @@ export const createLocation = async (req, res) => {
   const { title, latitude, longitude, reelUrl, imageUrl, notes, radius } = req.body;
 
   try {
+    const locationPoint = {
+      type: 'Point',
+      coordinates: [longitude, latitude], // GeoJSON stores as [longitude, latitude]
+    };
+
     let existingLocation = await Location.findOne({
       user: req.user.id,
-      latitude,
-      longitude,
+      'location.coordinates': locationPoint.coordinates,
     });
 
     if (existingLocation) {
@@ -33,8 +38,7 @@ export const createLocation = async (req, res) => {
     const newLocation = new Location({
       user: req.user.id,
       title,
-      latitude,
-      longitude,
+      location: locationPoint,
       reelUrl,
       imageUrl,
       notes,
@@ -44,7 +48,7 @@ export const createLocation = async (req, res) => {
     const location = await newLocation.save();
     res.json(location);
   } catch (err) {
-    console.error(err.message);
+    logger.error(`Error in createLocation: ${err.message}`);
     res.status(500).send('Server Error');
   }
 };
@@ -67,7 +71,7 @@ export const deleteLocation = async (req, res) => {
 
     res.json({ msg: 'Location removed' });
   } catch (err) {
-    console.error(err.message);
+    logger.error(`Error in deleteLocation: ${err.message}`);
     res.status(500).send('Server Error');
   }
 };
@@ -76,12 +80,20 @@ export const deleteLocation = async (req, res) => {
 // @route   PUT /api/locations/:id
 // @access  Private
 export const updateLocation = async (req, res) => {
-  const { title, notes } = req.body;
+  const { title, notes, latitude, longitude, radius } = req.body;
 
   // Build location object
   const locationFields = {};
   if (title) locationFields.title = title;
   if (notes) locationFields.notes = notes;
+  if (radius) locationFields.radius = radius;
+
+  if (latitude && longitude) {
+    locationFields.location = {
+      type: 'Point',
+      coordinates: [longitude, latitude],
+    };
+  }
 
   try {
     let location = await Location.findById(req.params.id);
@@ -101,7 +113,46 @@ export const updateLocation = async (req, res) => {
 
     res.json(location);
   } catch (err) {
-    console.error(err.message);
+    logger.error(`Error in updateLocation: ${err.message}`);
+    res.status(500).send('Server Error');
+  }
+};
+
+// @desc    Get nearby locations for a user
+// @route   GET /api/locations/nearby
+// @access  Private
+export const getNearbyLocations = async (req, res) => {
+  const { latitude, longitude } = req.query;
+
+  if (!latitude || !longitude) {
+    return res.status(400).json({ msg: 'Latitude and longitude are required query parameters.' });
+  }
+
+  try {
+    const userLocation = {
+      type: 'Point',
+      coordinates: [parseFloat(longitude), parseFloat(latitude)],
+    };
+
+    const nearbyLocations = await Location.aggregate([
+      {
+        $geoNear: {
+          near: userLocation,
+          distanceField: 'distance', // Distance in meters
+          spherical: true,
+          query: { user: req.user.id }, // Filter by current user
+        },
+      },
+      {
+        $match: {
+          $expr: { $lte: ['$distance', '$radius'] }, // Filter where distance <= custom radius
+        },
+      },
+    ]);
+
+    res.json(nearbyLocations);
+  } catch (err) {
+    logger.error(`Error in getNearbyLocations: ${err.message}`);
     res.status(500).send('Server Error');
   }
 };

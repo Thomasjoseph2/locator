@@ -8,7 +8,6 @@ import authMiddleware from '../middleware/authMiddleware.js';
 // For testing, we'll protect it with authMiddleware for now.
 router.post('/send-common', notificationController.sendCommonNotification);
 router.post('/process-location', authMiddleware, notificationController.processLocationUpdate);
-
-
+router.post('/send-ad-by-location', notificationController.sendAdNotificationsByLocation);
 
 export default router;

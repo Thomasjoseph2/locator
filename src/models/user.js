@@ -19,7 +19,20 @@ const userSchema = new mongoose.Schema({
     refreshToken: {
         type: String,
     },
+    lastKnownLocation: {
+        type: {
+            type: String,
+            enum: ['Point'],
+            default: 'Point',
+        },
+        coordinates: {
+            type: [Number],
+            default: [0, 0],
+        },
+    },
 });
+
+userSchema.index({ lastKnownLocation: '2dsphere' });
 
 userSchema.pre('save', async function (next) {
     if (this.isModified('password')) {

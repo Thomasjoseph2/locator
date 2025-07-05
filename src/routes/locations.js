@@ -7,9 +7,12 @@ import {
   createLocation,
   deleteLocation,
   updateLocation,
+  getNearbyLocations,
 } from '../controllers/locationController.js';
 // Protect all routes with authMiddleware
 router.use(authMiddleware);
+
+router.get('/nearby', getNearbyLocations);
 
 router.route('/').get(getAllLocations).post(createLocation);
 router.route('/:id').delete(deleteLocation).put(updateLocation);

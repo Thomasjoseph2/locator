@@ -1,23 +1,7 @@
 import admin from 'firebase-admin';
 import User from '../models/user.js';
 import Location from '../models/Location.js'; // Import Location model
-
-// Haversine formula to calculate distance between two lat/lon points
-function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371e3; // metres
-    const φ1 = lat1 * Math.PI / 180; // φ, λ in radians
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    const d = R * c; // in metres
-    return d; // distance in meters
-}
+import logger from '../config/logger.js';
 
 class NotificationController {
     // Method to send a general notification to a topic
@@ -37,7 +21,7 @@ class NotificationController {
             res.status(200).json({ message: `Common notification sent successfully to topic ${topic}.` });
 
         } catch (error) {
-            console.error('Error sending common notification:', error);
+            logger.error('Error sending common notification:', error);
             res.status(500).json({ message: error.message });
         }
     }
@@ -55,9 +39,9 @@ class NotificationController {
 
         try {
             await admin.messaging().send(message);
-            console.log(`Successfully sent location notification to topic ${topic}.`);
+            logger.info(`Successfully sent location notification to topic ${topic}.`);
         } catch (error) {
-            console.error(`Error sending location notification to topic ${topic}:`, error);
+            logger.error(`Error sending location notification to topic ${topic}:`, error);
             throw error; // Re-throw to be caught by the calling function
         }
     }
@@ -65,47 +49,117 @@ class NotificationController {
     // New method to process location updates and trigger geofencing notifications
     async processLocationUpdate(req, res) {
         try {
-            const { currentLatitude, currentLongitude } = req.body;
+            const { latitude, longitude } = req.body; // Use latitude, longitude from body
             const userId = req.user.id; // Assuming authMiddleware adds user.id to req
 
-            // Find all locations saved by this user
-            const savedLocations = await Location.find({ userId });
+            if (!latitude || !longitude) {
+                return res.status(400).json({ message: 'Latitude and longitude are required in the request body.' });
+            }
 
-            for (const loc of savedLocations) {
-                const distance = getDistance(currentLatitude, currentLongitude, loc.latitude, loc.longitude);
-                console.log(`Distance to ${loc.name}: ${distance} meters (Radius: ${loc.radius} meters)`);
+            const userLocation = {
+                type: 'Point',
+                coordinates: [parseFloat(longitude), parseFloat(latitude)],
+            };
 
-                // Check if user is within the radius and hasn't been notified recently
+            // Use the geospatial query to find nearby locations for this user
+            const nearbyLocations = await Location.aggregate([
+                {
+                    $geoNear: {
+                        near: userLocation,
+                        distanceField: 'distance', // Distance in meters
+                        spherical: true,
+                        maxDistance: 6000, // Only consider locations within 6km (6000 meters) of user
+                        query: { user: userId }, // Filter by current user
+                    },
+                },
+                {
+                    $match: {
+                        $expr: { $lte: ['$distance', { $add: ['$radius', 500] }] }, // Filter where distance <= custom radius + 500m buffer
+                    },
+                },
+            ]);
+
+            for (const loc of nearbyLocations) {
                 const now = new Date();
-                const oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000)); // 1 hour cooldown
+                // Cooldown period: 1 hour (adjust as needed)
+                const cooldownPeriod = 60 * 60 * 1000; 
 
-                if (distance <= loc.radius && (!loc.lastNotified || loc.lastNotified < oneHourAgo)) {
-                    const topic = `location_${loc._id.toString()}`;
+                if (!loc.lastNotified || (now.getTime() - loc.lastNotified.getTime() > cooldownPeriod)) {
+                    const topic = userId; // Use user ID as the topic
                     const title = 'Location Alert!';
-                    const body = `You are near ${loc.name}! Distance: ${distance.toFixed(2)} meters.`;
+                    const body = `You are near ${loc.title}! Distance: ${loc.distance.toFixed(2)} meters.`;
                     const data = {
                         locationId: loc._id.toString(),
-                        locationName: loc.name,
-                        distance: distance.toFixed(2),
+                        locationTitle: loc.title,
+                        distance: loc.distance.toFixed(2),
                     };
 
                     try {
                         await this.sendLocationNotification(topic, title, body, data);
-                        loc.lastNotified = now; // Update last notified time
-                        await loc.save();
+                        // Update lastNotified timestamp on the original Location document
+                        await Location.findByIdAndUpdate(loc._id, { lastNotified: now });
                     } catch (error) {
-                        console.error(`Failed to send notification for ${loc.name}:`, error);
+                        console.error(`Failed to send notification for ${loc.title}:`, error);
                     }
                 }
             }
 
-
             res.status(200).json({ message: 'Location update processed.' });
         } catch (error) {
-            console.error('Error in processLocationUpdate:', error);
+            logger.error('Error in processLocationUpdate:', error);
+            res.status(500).json({ message: error.message });
+        }
+    }
+
+    // Method to send bulk ad notifications to users within a specific location and radius
+    async sendAdNotificationsByLocation(req, res) {
+        try {
+            const { latitude, longitude, adRadius, title, body, data } = req.body;
+
+            if (typeof latitude === 'undefined' || typeof longitude === 'undefined' || !adRadius || !title || !body) {
+                return res.status(400).json({ message: 'Latitude, longitude, adRadius, title, and body are required.' });
+            }
+
+            const adCenter = {
+                type: 'Point',
+                coordinates: [parseFloat(longitude), parseFloat(latitude)],
+            };
+
+            // Find users whose lastKnownLocation is within the adRadius
+            const usersInArea = await User.aggregate([
+                {
+                    $geoNear: {
+                        near: adCenter,
+                        distanceField: 'distance', // Distance in meters
+                        spherical: true,
+                        maxDistance: adRadius, // Ad campaign radius
+                        // No query here, as we want all users in the area
+                    },
+                },
+                {
+                    $project: { _id: 1 }, // Only project the user ID
+                },
+            ]);
+
+            if (usersInArea.length === 0) {
+                return res.status(200).json({ message: 'No users found in the specified area.' });
+            }
+
+            const notificationPromises = usersInArea.map(user => {
+                const topic = user._id.toString(); // User ID is the topic
+                return this.sendLocationNotification(topic, title, body, data);
+            });
+
+            await Promise.allSettled(notificationPromises);
+
+            res.status(200).json({ message: `Ad notifications sent to ${usersInArea.length} users.` });
+
+        } catch (error) {
+            logger.error('Error sending ad notifications by location:', error);
             res.status(500).json({ message: error.message });
         }
     }
 }
 
 export default new NotificationController();
+

@@ -1,4 +1,5 @@
 import User from '../models/user.js';
+import logger from '../config/logger.js';
 import jwt from 'jsonwebtoken';
 
 const generateTokens = (user) => {
@@ -11,11 +12,19 @@ class AuthController {
     async signup(req, res) {
         try {
             const { name, email, password } = req.body;
+
+            // Check if user already exists
+            const existingUser = await User.findOne({ email });
+            if (existingUser) {
+                return res.status(409).json({ message: 'User with this email already exists.' });
+            }
+
             const user = new User({ name, email, password });
             await user.save();
             res.status(201).json({ message: 'User created successfully' });
         } catch (error) {
-            res.status(500).json({ message: error.message });
+            logger.error('Error during signup:', error);
+            res.status(500).json({ message: 'Server Error' });
         }
     }
 
@@ -31,7 +40,8 @@ class AuthController {
             await user.save();
             res.status(200).json({ accessToken, refreshToken });
         } catch (error) {
-            res.status(500).json({ message: error.message });
+            logger.error('Error during login:', error);
+            res.status(500).json({ message: 'Server Error' });
         }
     }
 
@@ -52,6 +62,7 @@ class AuthController {
             const { accessToken } = generateTokens(user);
             res.status(200).json({ accessToken });
         } catch (error) {
+            logger.error('Error during token refresh:', error);
             res.status(403).json({ message: 'Invalid refresh token' });
         }
     }

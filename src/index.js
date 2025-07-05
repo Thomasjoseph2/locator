@@ -1,8 +1,10 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import admin from 'firebase-admin';
+import logger from './config/logger.js';
+
 if (!process.env.FIREBASE_API_KEY) {
-  console.error('FIREBASE_API_KEY environment variable is not set.');
+  logger.error('FIREBASE_API_KEY environment variable is not set.');
   process.exit(1);
 }
 
@@ -11,9 +13,9 @@ try {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
-  console.log('Firebase Admin SDK initialized successfully.');
+  logger.info('Firebase Admin SDK initialized successfully.');
 } catch (error) {
-  console.error('Error parsing Firebase service account key:', error);
+  logger.error('Error parsing Firebase service account key:', error);
   process.exit(1);
 }
 import express from 'express';
@@ -23,6 +25,7 @@ import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import locationRoutes from './routes/locations.js';
 import notificationRoutes from './routes/notifications.js';
+import errorHandler from './middleware/errorHandler.js';
 
 const app = express();
 
@@ -34,10 +37,13 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/notifications', notificationRoutes);
 
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.log(err));
+    .then(() => logger.info('MongoDB connected'))
+    .catch(err => logger.error('MongoDB connection error:', err));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    logger.info(`Server is running on port ${PORT}`);
 });
+
+// Centralized error handling middleware
+app.use(errorHandler);
