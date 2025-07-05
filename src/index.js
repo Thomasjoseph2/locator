@@ -1,11 +1,21 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import admin from 'firebase-admin';
-import serviceAccount from './config/firebaseServiceAccountKey.json' with { type: "json" };
+if (!process.env.FIREBASE_API_KEY) {
+  console.error('FIREBASE_API_KEY environment variable is not set.');
+  process.exit(1);
+}
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_API_KEY);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+  console.log('Firebase Admin SDK initialized successfully.');
+} catch (error) {
+  console.error('Error parsing Firebase service account key:', error);
+  process.exit(1);
+}
 import express from 'express';
 import mongoose from 'mongoose';
 import bodyParser from 'body-parser';
