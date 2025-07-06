@@ -3,7 +3,7 @@ import logger from '../config/logger.js';
 import jwt from 'jsonwebtoken';
 
 const generateTokens = (user) => {
-    const accessToken = jwt.sign({ id: user._id }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '15m' });
+    const accessToken = jwt.sign({ id: user._id }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '60m' });
     const refreshToken = jwt.sign({ id: user._id }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: '7d' });
     return { accessToken, refreshToken };
 };
@@ -21,7 +21,7 @@ class AuthController {
 
             const user = new User({ name, email, password });
             await user.save();
-            res.status(201).json({ message: 'User created successfully' });
+            res.status(201).json({ message: 'User created successfully',user: { id: user._id, name: user.name, email: user.email } });
         } catch (error) {
             logger.error('Error during signup:', error);
             res.status(500).json({ message: 'Server Error' });
@@ -38,7 +38,7 @@ class AuthController {
             const { accessToken, refreshToken } = generateTokens(user);
             user.refreshToken = refreshToken;
             await user.save();
-            res.status(200).json({ accessToken, refreshToken });
+            res.status(200).json({ accessToken, refreshToken ,user: { id: user._id, name: user.name, email: user.email } });
         } catch (error) {
             logger.error('Error during login:', error);
             res.status(500).json({ message: 'Server Error' });
